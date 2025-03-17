@@ -99,8 +99,8 @@ export async function initializeDatabase() {
         // Voeg standaard retailers toe
         await db('retailers').insert([
           { name: 'Lidl', baseUrl: 'https://www.lidl.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
-          { name: 'Marktplaats', baseUrl: 'https://www.marktplaats.nl', useRotatingProxy: true, useRandomUserAgent: true, isActive: true },
-          { name: 'Vinted', baseUrl: 'https://www.vinted.nl', useRotatingProxy: true, useRandomUserAgent: true, isActive: true },
+          { name: 'Marktplaats', baseUrl: 'https://www.marktplaats.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
+          { name: 'Vinted', baseUrl: 'https://www.vinted.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
         ]);
         logger.info('Standaard retailers toegevoegd');
       }
