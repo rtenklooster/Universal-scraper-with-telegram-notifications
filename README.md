@@ -10,12 +10,16 @@ A flexible, extensible multi-retailer scraper system that monitors product price
 - Customizable search queries with price filtering
 - Configurable search intervals per query
 - Support for rotating proxies and user agents to avoid blocking
+- Location-based filtering and distance information for Marktplaats items
 - Scalable database design that can start with SQLite and migrate to cloud solutions
 
 ## Supported Retailers
 
 - Lidl (implemented)
-- Marktplaats (to be implemented)
+- Marktplaats (implemented)
+  - Supports searching by location
+  - Shows distance to items
+  - Handles both fixed price and bidding items
 - Vinted (to be implemented)
 - More can be added by implementing the BaseScraper interface
 
@@ -41,8 +45,8 @@ A flexible, extensible multi-retailer scraper system that monitors product price
 
 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/multiscraper.git
-cd multiscraper
+git clone https://github.com/rtenklooster/Universal-scraper-with-telegram-notifications.git
+cd Universal-scraper-with-telegram-notifications
 ```
 
 2. Install dependencies
@@ -50,16 +54,21 @@ cd multiscraper
 npm install
 ```
 
-3. Configure environment variables
-   - Copy `.env.example` to `.env`
+3. Setup data directories
+```bash
+mkdir -p data logs
+```
+
+4. Configure environment variables
+   - Copy `src/.env.example` to `src/.env`
    - Update the values, especially `TELEGRAM_BOT_TOKEN`
 
-4. Build the project
+5. Build the project
 ```bash
 npm run build
 ```
 
-5. Start the application
+6. Start the application
 ```bash
 npm start
 ```
