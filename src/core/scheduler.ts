@@ -163,6 +163,9 @@ export class Scheduler {
     // Check for new queries every minute
     this.watchForNewQueriesJob = schedule.scheduleJob('*/1 * * * *', async () => {
       try {
+        // Ensure scrapers are initialized
+        await this.initializeScrapers();
+        
         logger.debug('Checking for new search queries...');
         
         // Get the IDs of all currently scheduled queries
@@ -181,8 +184,20 @@ export class Scheduler {
         if (newQueries.length > 0) {
           logger.info(`Found ${newQueries.length} new search queries to schedule`);
           
-          // Schedule each new query
+          // Schedule and immediately execute each new query
           for (const query of newQueries) {
+            // Since we already initialized the scrapers, we can get it directly from the map
+            const scraper = this.scrapers.get(query.retailerId);
+            if (!scraper) {
+              logger.error(`No scraper available for retailer ID ${query.retailerId}`);
+              continue;
+            }
+
+            // Execute the search immediately
+            logger.info(`Executing initial search for new query ID ${query.id}`);
+            await this.executeSearch(query, scraper);
+            
+            // Then schedule it for future runs
             await this.scheduleQuery(query);
           }
         }
@@ -231,6 +246,9 @@ export class Scheduler {
     try {
       logger.info(`Executing search for query ID ${query.id}: ${query.searchText}`);
       
+      // Determine if this is the first run
+      const isFirstRun = !query.lastScrapedAt;
+      
       // Search for products
       const newProducts = await scraper.search(query);
       
@@ -254,13 +272,16 @@ export class Scheduler {
               .update({
                 lastCheckedAt: new Date(),
                 price: newProduct.price,
-                oldPrice: existingProduct.price !== newProduct.price ? existingProduct.price : existingProduct.oldPrice
+                oldPrice: existingProduct.price !== newProduct.price ? existingProduct.price : existingProduct.oldPrice,
+                priceType: newProduct.priceType,
+                location: newProduct.location,
+                distanceMeters: newProduct.distanceMeters
               });
             
             productId = existingProduct.id;
             
-            // Only notify on price drops if that preference is enabled
-            if (query.notifyOnPriceDrops && newProduct.price < existingProduct.price) {
+            // Only notify on price drops if that preference is enabled and it's not the first run
+            if (!isFirstRun && query.notifyOnPriceDrops && newProduct.price < existingProduct.price) {
               // Calculate the percentage drop
               const dropPercentage = this.calculatePriceDropPercentage(existingProduct.price, newProduct.price);
               
@@ -273,7 +294,10 @@ export class Scheduler {
                   ...existingProduct, 
                   id: productId, 
                   price: newProduct.price, 
-                  oldPrice: existingProduct.price 
+                  oldPrice: existingProduct.price,
+                  priceType: newProduct.priceType,
+                  location: newProduct.location,
+                  distanceMeters: newProduct.distanceMeters
                 };
                 
                 logger.info(`Price drop detected: ${product.title} dropped from ${existingProduct.price} to ${newProduct.price} (${dropPercentage}% off)`);
@@ -305,8 +329,8 @@ export class Scheduler {
             productId = insertedId;
             const product = { ...newProduct, id: productId } as Product;
             
-            // Only notify on new products if that preference is enabled
-            if (query.notifyOnNew) {
+            // Only notify on new products if that preference is enabled and it's not the first run
+            if (!isFirstRun && query.notifyOnNew) {
               logger.info(`New product found: ${product.title} at price ${product.price}`);
               
               const notificationId = await this.notificationManager.createNotification(
@@ -331,6 +355,11 @@ export class Scheduler {
       await db('search_queries')
         .where({ id: query.id })
         .update({ lastScrapedAt: new Date() });
+
+      // Log first run completion
+      if (isFirstRun) {
+        logger.info(`First run completed for query ID ${query.id}. Found ${newProducts.length} initial products.`);
+      }
     } catch (error) {
       logger.error(`Error executing search for query ID ${query.id}: ${error}`);
     }
@@ -363,6 +392,10 @@ export class Scheduler {
           'products.currency as productCurrency',
           'products.productUrl',
           'products.imageUrl',
+          'products.priceType',
+          'products.location',
+          'products.distanceMeters',
+          'products.retailerId',
           'retailers.name as retailerName',
           'search_queries.priceDropThresholdPercent'
         )

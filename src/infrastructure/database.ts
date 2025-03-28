@@ -52,6 +52,15 @@ async function migrateDatabase() {
       logger.info('DistanceMeters kolom toegevoegd aan products tabel');
     }
 
+    // Check and add priceType column
+    const hasPriceTypeColumn = await db.schema.hasColumn('products', 'priceType');
+    if (!hasPriceTypeColumn) {
+      await db.schema.table('products', (table) => {
+        table.string('priceType');
+      });
+      logger.info('PriceType kolom toegevoegd aan products tabel');
+    }
+
     logger.info('Database migratie succesvol afgerond');
   } catch (error) {
     logger.error('Fout bij migreren van database:', error);
@@ -113,7 +122,7 @@ export async function initializeDatabase() {
           table.integer('userId').notNullable().references('id').inTable('users');
           table.integer('retailerId').notNullable().references('id').inTable('retailers');
           table.string('searchText').notNullable();
-          // minPrice and maxPrice removed as requested
+          table.string('apiUrl');  // Add this line
           table.timestamp('createdAt').defaultTo(db.fn.now());
           table.timestamp('lastScrapedAt');
           table.boolean('isActive').defaultTo(true);
@@ -125,16 +134,13 @@ export async function initializeDatabase() {
         });
         logger.info('Search queries tabel aangemaakt');
       } else {
-        // Check if we need to update the existing table with new notification columns
-        const hasNotifyOnNew = await db.schema.hasColumn('search_queries', 'notifyOnNew');
-        if (!hasNotifyOnNew) {
-          // Add the new notification preferences columns
+        // Check if we need to add apiUrl column
+        const hasApiUrlColumn = await db.schema.hasColumn('search_queries', 'apiUrl');
+        if (!hasApiUrlColumn) {
           await db.schema.alterTable('search_queries', (table) => {
-            table.boolean('notifyOnNew').defaultTo(true);
-            table.boolean('notifyOnPriceDrops').defaultTo(true);
-            table.integer('priceDropThresholdPercent');
+            table.string('apiUrl');
           });
-          logger.info('Search queries tabel bijgewerkt met notificatievoorkeuren');
+          logger.info('ApiUrl kolom toegevoegd aan search_queries tabel');
         }
       }
 

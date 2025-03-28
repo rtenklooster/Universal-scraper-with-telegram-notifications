@@ -3,7 +3,7 @@ export interface SearchQuery {
   userId: number;
   retailerId: number;
   searchText: string;
-  // minPrice and maxPrice removed as requested
+  apiUrl?: string;
   createdAt: Date;
   lastScrapedAt?: Date;
   isActive: boolean;
@@ -12,6 +12,7 @@ export interface SearchQuery {
   notifyOnNew: boolean;
   notifyOnPriceDrops: boolean;
   priceDropThresholdPercent?: number; // Optional threshold percentage for price drops
+  isFirstRun?: boolean; // Track if this is the first run of the query
 }
 
 export type NewSearchQuery = Omit<SearchQuery, 'id' | 'createdAt' | 'lastScrapedAt'> & {

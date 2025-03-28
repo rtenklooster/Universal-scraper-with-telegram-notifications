@@ -5,7 +5,8 @@ import logger from '../../infrastructure/logger';
 
 export enum NotificationType {
   NEW_PRODUCT = 'NEW_PRODUCT',
-  PRICE_DROP = 'PRICE_DROP'
+  PRICE_DROP = 'PRICE_DROP',
+  INITIAL_SUMMARY = 'INITIAL_SUMMARY'
 }
 
 export interface Notification {
@@ -70,6 +71,7 @@ export class NotificationManager {
           'products.location',
           'products.distanceMeters',
           'products.retailerId',
+          'products.priceType',
           'retailers.name as retailerName',
           'search_queries.priceDropThresholdPercent'
         )
@@ -121,9 +123,6 @@ export class NotificationManager {
    * @returns Een object met het geformatteerde bericht en de afbeelding URL
    */
   formatNotificationMessage(notification: any): FormattedNotification {
-    // Log hele notification object voor debug
-    logger.debug(`Formatting notification: ${JSON.stringify(notification, null, 2)}`);
-    
     const { 
       notificationType, 
       productTitle, 
@@ -136,18 +135,15 @@ export class NotificationManager {
       imageUrl,
       priceDropPercentage,
       location,
-      distanceMeters
+      distanceMeters,
+      priceType
     } = notification;
-    
-    // Log specifieke velden voor debug
-    logger.debug(`Location: ${location}, Distance: ${distanceMeters}, RetailerId: ${retailerId}`);
     
     let message = `*${retailerName}* - ${productTitle}\n\n`;
     
     if (notificationType === NotificationType.NEW_PRODUCT) {
       message += `🆕 *Nieuw product gevonden!*\n`;
     } else if (notificationType === NotificationType.PRICE_DROP) {
-      // Calculate percentage drop if not provided
       let dropPercent = priceDropPercentage;
       if (dropPercent === undefined && productOldPrice && productPrice) {
         dropPercent = this.calculatePriceDropPercentage(productOldPrice, productPrice);
@@ -158,12 +154,13 @@ export class NotificationManager {
       } else {
         message += `📉 *Prijsdaling!*\n`;
       }
-      
       message += `Oude prijs: ${productOldPrice} ${productCurrency}\n`;
     }
     
-    // Toon "Bieden" voor Marktplaats producten met prijs 0
-    if (Number(retailerId) === RetailerType.MARKTPLAATS && productPrice === 0) {
+    // Prijs weergave
+    if (priceType === 'RESERVED') {
+      message += `Prijs: *Gereserveerd*\n`;
+    } else if (Number(retailerId) === RetailerType.MARKTPLAATS && (productPrice === 0 || priceType === 'FAST_BID')) {
       message += `Prijs: *Bieden*\n`;
     } else {
       message += `Prijs: *${productPrice} ${productCurrency}*\n`;

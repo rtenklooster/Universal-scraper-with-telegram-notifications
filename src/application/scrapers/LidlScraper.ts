@@ -1,5 +1,5 @@
 import { BaseScraper } from './BaseScraper';
-import { Product, NewProduct } from '../../domain/Product';
+import { NewProduct } from '../../domain/Product';
 import { SearchQuery } from '../../domain/SearchQuery';
 import logger from '../../infrastructure/logger';
 
@@ -406,6 +406,9 @@ export class LidlScraper extends BaseScraper {
                  (item.gridbox?.data?.brand?.name) || 
                  'Onbekend';
     
+    // Create timestamp for both date fields
+    const now = new Date();
+    
     return {
       retailerId: this.retailer.id,
       externalId: productId,
@@ -416,41 +419,10 @@ export class LidlScraper extends BaseScraper {
       imageUrl,
       productUrl,
       isAvailable,
-      description: `Merk: ${brand}\n${item.availability?.availabilityNote || ''}`
+      description: `Merk: ${brand}\n${item.availability?.availabilityNote || ''}`,
+      discoveredAt: now,
+      lastCheckedAt: now
     };
-  }
-
-  async checkProduct(product: Product): Promise<Product> {
-    try {
-      // Voor individuele producten gebruiken we de product URL
-      const response = await this.httpClient.get(product.productUrl);
-      const data = JSON.parse(response);
-      
-      // Update het product met nieuwe data
-      const updatedProduct = { ...product };
-      
-      if (data.price) {
-        if (data.price.price !== product.price) {
-          updatedProduct.oldPrice = product.price;
-          updatedProduct.price = data.price.price;
-        }
-      }
-      
-      if (data.availability) {
-        updatedProduct.isAvailable = data.availability.orderable && data.online?.isOrderable;
-      }
-      
-      updatedProduct.lastCheckedAt = new Date();
-      
-      return updatedProduct;
-    } catch (error) {
-      logger.error(`Fout bij controleren van product ${product.externalId}: ${error}`);
-      return {
-        ...product,
-        isAvailable: false,
-        lastCheckedAt: new Date()
-      };
-    }
   }
 
   formatProductUrl(productPath: string): string {

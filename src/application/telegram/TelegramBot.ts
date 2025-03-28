@@ -7,11 +7,13 @@ import db from '../../infrastructure/database';
 import { User, NewUser } from '../../domain/User';
 import { NewSearchQuery } from '../../domain/SearchQuery';
 import { NotificationManager, FormattedNotification } from '../notifications/NotificationManager';
+import { Scheduler } from '../../core/scheduler';
 
 export class TelegramBot {
   private bot: Telegraf<Context<Update>>;
   private notificationManager: NotificationManager;
   private userStates: Map<number, { state: string; data: any }> = new Map();
+  private scheduler?: Scheduler;  // Add scheduler reference
 
   constructor() {
     if (!config.telegram.botToken) {
@@ -23,6 +25,11 @@ export class TelegramBot {
     
     this.setupCommands();
     this.setupMessageHandlers();
+  }
+
+  // Add setter for scheduler
+  public setScheduler(scheduler: Scheduler): void {
+    this.scheduler = scheduler;
   }
 
   private setupCommands(): void {
@@ -425,7 +432,17 @@ export class TelegramBot {
         priceDropThresholdPercent: data.priceDropThresholdPercent
       };
       
-      await db('search_queries').insert(newQuery);
+      // Insert the query and get its ID
+      const [queryId] = await db('search_queries').insert(newQuery);
+      
+      // Schedule the query immediately if scheduler is available
+      if (this.scheduler) {
+        const query = await db('search_queries').where({ id: queryId }).first();
+        if (query) {
+          await this.scheduler.scheduleQuery(query);
+          logger.info(`Nieuwe zoekopdracht ${queryId} direct ingepland`);
+        }
+      }
       
       // Clear user state
       this.userStates.delete(ctx.from!.id);

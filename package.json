@@ -13,7 +13,8 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "lint": "eslint . --ext .ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:api": "ts-node src/tests/testApiDiscovery.ts"
   },
   "keywords": [
     "scraper",
@@ -25,7 +26,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^22.13.10",
+    "@types/node": "^22.13.14",
     "@types/node-schedule": "^2.1.7",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2"
@@ -36,6 +37,7 @@
     "dotenv": "^16.4.7",
     "knex": "^3.1.0",
     "node-schedule": "^2.1.1",
+    "puppeteer": "^24.4.0",
     "sqlite3": "^5.1.7",
     "telegraf": "^4.16.3",
     "winston": "^3.17.0"

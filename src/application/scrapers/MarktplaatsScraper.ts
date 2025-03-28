@@ -1,8 +1,10 @@
 import { BaseScraper } from './BaseScraper';
-import { Product, NewProduct } from '../../domain/Product';
+import { NewProduct } from '../../domain/Product';
 import { SearchQuery } from '../../domain/SearchQuery';
 import { Retailer } from '../../domain/Retailer';
 import logger from '../../infrastructure/logger';
+import { MarktplaatsApiDiscovery } from './MarktplaatsApiDiscovery';
+import db from '../../infrastructure/database';
 
 interface MarktplaatsItem {
   itemId: string;
@@ -25,212 +27,174 @@ interface MarktplaatsItem {
   date: string;
 }
 
-// Updated interface to match actual API response
 interface MarktplaatsSearchResponse {
   listings: MarktplaatsItem[];
+  totalResultCount: number;
+  maxAllowedPageNumber: number;
+  pagination?: {
+    offset: number;
+    limit: number;
+  };
 }
 
 export class MarktplaatsScraper extends BaseScraper {
-  private readonly API_BASE_URL = 'https://www.marktplaats.nl/lrp/api/search';
-  
+  private readonly PAGE_SIZE = 30;
+  private apiDiscovery: MarktplaatsApiDiscovery;
+
   constructor(retailer: Retailer) {
     super(retailer);
+    this.apiDiscovery = new MarktplaatsApiDiscovery();
+  }
+
+  private addPaginationToUrl(apiUrl: string, offset: number): string {
+    const url = new URL(apiUrl);
+    url.searchParams.set('limit', this.PAGE_SIZE.toString());
+    url.searchParams.set('offset', offset.toString());
+    return url.toString();
+  }
+
+  private async fetchPage(apiUrl: string, offset: number): Promise<MarktplaatsSearchResponse> {
+    const paginatedUrl = this.addPaginationToUrl(apiUrl, offset);
+    logger.debug(`Making GET request to ${paginatedUrl}`);
+    
+    const response = await this.httpClient.get(paginatedUrl, {
+      'Accept': 'application/json',
+      'Accept-Language': 'nl,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
+      'Referer': 'https://www.marktplaats.nl/',
+      'Origin': 'https://www.marktplaats.nl'
+    });
+
+    const parsedResponse = JSON.parse(response);
+    
+    // Log the raw response structure for debugging
+    logger.debug('Raw API response:', {
+      totalResultCount: parsedResponse.totalResultCount,
+      maxAllowedPageNumber: parsedResponse.maxAllowedPageNumber,
+      listingsCount: parsedResponse.listings?.length || 0,
+      offset
+    });
+
+    return parsedResponse;
+  }
+
+  private convertItemToProduct(item: MarktplaatsItem): NewProduct {
+    const price = item.priceInfo.priceType === 'FAST_BID' ? 0 : item.priceInfo.priceCents / 100;
+    
+    // Get image URL with fallback logic
+    let imageUrl = item.pictures?.[0]?.largeUrl || item.imageUrls?.[0];
+    if (imageUrl && !imageUrl.startsWith('http')) {
+      imageUrl = `https:${imageUrl}`;
+    }
+    
+    const now = new Date();
+    
+    return {
+      externalId: item.itemId,
+      title: item.title,
+      description: item.description,
+      price,
+      priceType: item.priceInfo.priceType,
+      currency: 'EUR',
+      productUrl: `https://www.marktplaats.nl/v/${item.itemId}`,
+      imageUrl,
+      location: item.location?.cityName || 'Onbekend',
+      distanceMeters: item.location?.distanceMeters,
+      retailerId: this.retailer.id,
+      isAvailable: true,
+      discoveredAt: now,
+      lastCheckedAt: now
+    };
   }
 
   public async search(query: SearchQuery): Promise<NewProduct[]> {
     try {
-      const products = await this.scrape(query.searchText);
-      this.logFoundProducts(products);
-      return products;
-    } catch (error) {
-      logger.error(`Error searching Marktplaats: ${error}`);
-      return [];
-    }
-  }
+      logger.info(`MarktplaatsScraper - Starting search for: ${query.searchText}`);
 
-  public async checkProduct(product: Product): Promise<Product> {
-    try {
-      const products = await this.scrape(product.title);
-      const updatedProduct = products.find(p => p.externalId === product.externalId);
-      
-      if (!updatedProduct) {
-        return {
-          ...product,
-          isAvailable: false,
-          lastCheckedAt: new Date()
-        };
+      // Check if we have a stored API URL
+      let apiUrl = query.apiUrl;
+
+      // If no API URL is stored, discover it
+      if (!apiUrl && query.searchText.startsWith('http')) {
+        const discoveredUrl = await this.apiDiscovery.discoverApiUrl(query.searchText);
+        
+        if (discoveredUrl) {
+          apiUrl = discoveredUrl;
+          // Store the discovered API URL
+          await db('search_queries')
+            .where({ id: query.id })
+            .update({ apiUrl: discoveredUrl });
+          logger.info(`MarktplaatsScraper - Stored new API URL for query ${query.id}`);
+        } else {
+          throw new Error('Could not discover API URL');
+        }
       }
 
-      return {
-        ...product,
-        price: updatedProduct.price,
-        isAvailable: true,
-        lastCheckedAt: new Date()
-      };
+      if (!apiUrl) {
+        throw new Error('No API URL available for this query');
+      }
+
+      const allProducts: NewProduct[] = [];
+
+      // Get first page to get pagination info
+      logger.info('MarktplaatsScraper - Fetching first page...');
+      const firstPage = await this.fetchPage(apiUrl, 0);
+      
+      if (!firstPage.listings || !Array.isArray(firstPage.listings)) {
+        logger.warn('Invalid response from Marktplaats API - no listings array');
+        return [];
+      }
+
+      const totalResults = firstPage.totalResultCount;
+      logger.info(`MarktplaatsScraper - Total results available: ${totalResults}`);
+
+      // Add products from first page
+      allProducts.push(...firstPage.listings.map(item => this.convertItemToProduct(item)));
+      
+      const maxPages = Math.ceil(totalResults / this.PAGE_SIZE);
+      const allowedPages = firstPage.maxAllowedPageNumber || 0;
+      const pagesToFetch = Math.min(maxPages - 1, allowedPages);
+      
+      logger.info('MarktplaatsScraper - Pagination info:', {
+        totalResults,
+        maxPages,
+        allowedPages,
+        pagesToFetch,
+        currentProducts: allProducts.length
+      });
+
+      // Fetch remaining pages if available
+      if (pagesToFetch > 0) {
+        logger.info(`MarktplaatsScraper - Will fetch ${pagesToFetch} additional pages`);
+        for (let page = 1; page <= pagesToFetch; page++) {
+          const offset = page * this.PAGE_SIZE;
+          logger.info(`MarktplaatsScraper - Fetching page ${page + 1} of ${pagesToFetch + 1} (offset: ${offset})`);
+          
+          const pageResponse = await this.fetchPage(apiUrl, offset);
+          
+          if (pageResponse.listings && Array.isArray(pageResponse.listings)) {
+            const newProducts = pageResponse.listings.map(item => this.convertItemToProduct(item));
+            allProducts.push(...newProducts);
+            logger.info(`MarktplaatsScraper - Added ${newProducts.length} products from page ${page + 1}`);
+          }
+
+          // Add a small delay between requests to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } else {
+        logger.info('MarktplaatsScraper - No additional pages to fetch');
+      }
+
+      logger.info(`MarktplaatsScraper - Found ${allProducts.length} products in total`);
+      return allProducts;
+
     } catch (error) {
-      logger.error(`Error checking Marktplaats product: ${error}`);
-      return {
-        ...product,
-        lastCheckedAt: new Date()
-      };
+      logger.error(`MarktplaatsScraper - Error during search: ${error}`);
+      throw error;
     }
   }
 
   public formatProductUrl(productId: string): string {
-    return `https://www.marktplaats.nl/v/path-to-product/${productId}`;
-  }
-
-  protected async parseUrl(url: string): Promise<{ query: string; additionalParams: Record<string, string> }> {
-    try {
-      const parsedUrl = new URL(url);
-      const searchParams = new URLSearchParams(parsedUrl.search);
-      
-      // Extract query from either q parameter or path
-      let query = searchParams.get('q') || '';
-      if (!query && parsedUrl.hash) {
-        // Try to extract from hash format like #q:search+term
-        const hashMatch = parsedUrl.hash.match(/q:([^|]+)/);
-        if (hashMatch) {
-          query = decodeURIComponent(hashMatch[1]);
-        }
-      }
-      
-      // Extract additional parameters
-      const additionalParams: Record<string, string> = {};
-      
-      // Extract postcode if present
-      if (parsedUrl.hash && parsedUrl.hash.includes('postcode:')) {
-        const postcodeMatch = parsedUrl.hash.match(/postcode:([^|]+)/);
-        if (postcodeMatch) {
-          additionalParams.postcode = postcodeMatch[1];
-        }
-      }
-      
-      // Extract distance if present
-      if (parsedUrl.hash && parsedUrl.hash.includes('distanceMeters:')) {
-        const distanceMatch = parsedUrl.hash.match(/distanceMeters:(\d+)/);
-        if (distanceMatch) {
-          additionalParams.distanceMeters = distanceMatch[1];
-        }
-      }
-      
-      // Extract offered since if present
-      if (parsedUrl.hash && parsedUrl.hash.includes('offeredSince:')) {
-        const offeredSinceMatch = parsedUrl.hash.match(/offeredSince:([^|]+)/);
-        if (offeredSinceMatch) {
-          const offeredSince = offeredSinceMatch[1];
-          additionalParams['attributesByKey[]'] = `offeredSince:${offeredSince}`;
-        }
-      }
-
-      // Extract category IDs if present in the URL path
-      const pathMatch = parsedUrl.pathname.match(/\/l\/[^\/]+\/([^\/]+)/);
-      if (pathMatch) {
-      }
-
-      return { query, additionalParams };
-    } catch (error) {
-      logger.error(`Error parsing Marktplaats URL: ${error}`);
-      throw new Error('Invalid Marktplaats URL');
-    }
-  }
-
-  private async scrape(searchText: string): Promise<NewProduct[]> {
-    try {
-      // Check if searchText is a URL
-      let query: string;
-      let additionalParams: Record<string, string> = {};
-
-      if (searchText.startsWith('http')) {
-        const parsed = await this.parseUrl(searchText);
-        query = parsed.query;
-        additionalParams = parsed.additionalParams;
-      } else {
-        query = searchText;
-        // Add default category IDs for all non-URL searches
-        additionalParams.l1CategoryId = '322';
-        additionalParams.l2CategoryId = '338';
-      }
-
-      // Construct API URL with parameters
-      const params = new URLSearchParams({
-        query,
-        limit: '30',
-        offset: '0',
-        searchInTitleAndDescription: 'true',
-        viewOptions: 'list-view',
-        ...additionalParams
-      });
-
-      const apiUrl = `${this.API_BASE_URL}?${params.toString()}`;
-      
-      // Log original search URL (if applicable) and API URL
-      if (searchText.startsWith('http')) {
-        logger.info(`MarktplaatsScraper - Original URL: ${searchText}`);
-      }
-      logger.info(`MarktplaatsScraper - API URL: ${apiUrl}`);
-
-      // Make API request
-      const response = await this.httpClient.get(apiUrl, {
-        'Accept': 'application/json',
-        'Accept-Language': 'nl,en;q=0.9',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
-        'Referer': 'https://www.marktplaats.nl/',
-        'Origin': 'https://www.marktplaats.nl'
-      });
-
-      // Parse the response with better error handling
-      let data: MarktplaatsSearchResponse;
-      try {
-        data = JSON.parse(response);
-      } catch (parseError) {
-        logger.error(`MarktplaatsScraper - JSON parsing error: ${parseError}`);
-        logger.debug(`MarktplaatsScraper - Raw response: ${response}`);
-        throw parseError;
-      }
-
-      // Check if we have search results
-      if (!data || !data.listings || !Array.isArray(data.listings)) {
-        logger.warn('Invalid or empty response from Marktplaats API');
-        logger.debug(`MarktplaatsScraper - Response structure: ${JSON.stringify(data, null, 2)}`);
-        return [];
-      }
-
-      const now = new Date();
-
-      // Transform API response to Product objects
-      return data.listings.map((item: MarktplaatsItem) => {
-        const price = item.priceInfo.priceType === 'FAST_BID' ? 0 : item.priceInfo.priceCents / 100;
-        
-        // Get image URL with fallback logic
-        let imageUrl = item.pictures?.[0]?.largeUrl || item.imageUrls?.[0];
-        if (imageUrl && !imageUrl.startsWith('http')) {
-          imageUrl = `https:${imageUrl}`;
-        }
-        
-        return {
-          externalId: item.itemId,
-          title: item.title,
-          description: item.description,
-          price,
-          currency: 'EUR',
-          productUrl: `https://www.marktplaats.nl/v/${item.itemId}`,
-          imageUrl,
-          location: item.location?.cityName || 'Onbekend',
-          distanceMeters: item.location?.distanceMeters,
-          retailerId: this.retailer.id,
-          isAvailable: true,
-          discoveredAt: now,
-          lastCheckedAt: now
-        };
-      });
-
-    } catch (error) {
-      logger.error(`MarktplaatsScraper - Error during scraping: ${error}`);
-      if (error instanceof Error) {
-        logger.debug(`MarktplaatsScraper - Error details: ${error.message}`);
-      }
-      return [];
-    }
+    return `https://www.marktplaats.nl/v/${productId}`;
   }
 }

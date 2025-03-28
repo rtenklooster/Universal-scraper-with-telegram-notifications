@@ -1,22 +1,21 @@
-export interface Product {
-  id: number;
-  retailerId: number;
+export interface NewProduct {
   externalId: string;
   title: string;
-  description?: string;
+  description: string;
   price: number;
   oldPrice?: number;
+  priceType?: string;
   currency: string;
-  imageUrl?: string;
   productUrl: string;
+  imageUrl?: string;
   location?: string;
   distanceMeters?: number;
+  retailerId: number;
+  isAvailable: boolean;
   discoveredAt: Date;
   lastCheckedAt: Date;
-  isAvailable: boolean;
 }
 
-export type NewProduct = Omit<Product, 'id' | 'discoveredAt' | 'lastCheckedAt'> & {
-  discoveredAt?: Date;
-  lastCheckedAt?: Date;
-};
+export interface Product extends NewProduct {
+  id: number;
+}

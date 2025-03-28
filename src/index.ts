@@ -57,6 +57,10 @@ async function bootstrap() {
     logger.info('Initializing scheduler...');
     const scheduler = new Scheduler(createScraper, telegramBot);
 
+    // Set the scheduler in the telegram bot
+    telegramBot.setScheduler(scheduler);
+    logger.info('Scheduler set in Telegram bot');
+
     // Schedule all active queries (this will also initialize scrapers)
     logger.info('Scheduling active queries...');
     await scheduler.scheduleAllActiveQueries();

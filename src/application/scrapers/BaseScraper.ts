@@ -26,10 +26,18 @@ export abstract class BaseScraper {
 
   /**
    * Controleer of een product nog steeds beschikbaar is en check voor prijswijzigingen
+   * Deze functionaliteit is verplaatst naar de search functie, dus deze methode
+   * update alleen de lastCheckedAt timestamp.
    * @param product Het te controleren product
    * @returns Het bijgewerkte product
    */
-  abstract checkProduct(product: Product): Promise<Product>;
+  async checkProduct(product: Product): Promise<Product> {
+    return {
+      ...product,
+      lastCheckedAt: new Date(),
+      isAvailable: true
+    };
+  }
 
   /**
    * Formatteer een product url op basis van een product ID
