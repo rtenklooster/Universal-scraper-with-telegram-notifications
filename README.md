@@ -16,19 +16,27 @@ A flexible, extensible multi-retailer scraper system that monitors product price
 ## Supported Retailers
 
 - Lidl (implemented)
+  - Searches through Lidl's API
+  - Supports category and search queries
+  - Price tracking and notifications
 - Marktplaats (implemented)
   - Supports searching by location
   - Shows distance to items
   - Handles both fixed price and bidding items
+  - Uses API discovered through URL parsing
 - Vinted (to be implemented)
 - More can be added by implementing the BaseScraper interface
 
 ## Technologies
 
 - **Language**: TypeScript/Node.js
-- **Database**: SQLite (local development), easily extendable to PostgreSQL/MySQL for cloud deployment
+- **Database**: 
+  - SQLite for local development
+  - Azure SQL Server for cloud deployment
 - **Telegram**: Telegraf library for bot implementation
-- **Scraping**: Axios for HTTP requests, Cheerio for HTML parsing
+- **Scraping**: 
+  - Axios for HTTP requests
+  - Puppeteer for API discovery
 - **Scheduling**: node-schedule for timed operations
 - **Configuration**: dotenv for environment variables
 - **Logging**: Winston for structured logging
@@ -60,8 +68,13 @@ mkdir -p data logs
 ```
 
 4. Configure environment variables
-   - Copy `src/.env.example` to `src/.env`
-   - Update the values, especially `TELEGRAM_BOT_TOKEN`
+   - Copy `.env.example` to `.env`
+   - Update the values:
+     - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token
+     - `DATABASE_TYPE`: 'sqlite' for local or 'mssql' for Azure
+     - Database connection details if using Azure SQL
+     - `USE_ROTATING_PROXY`: true/false for proxy usage
+     - `LOG_LEVEL`: Logging verbosity (info/debug/error)
 
 5. Build the project
 ```bash
@@ -78,50 +91,50 @@ For development mode with auto-reloading:
 npm run dev
 ```
 
-## Configuration
+## Usage
 
-Edit the `.env` file to configure:
+After starting the bot, you can interact with it through Telegram:
 
-- Telegram bot token
-- Default scrape intervals
-- Database settings
-- Proxy settings
-- Logging level
+- `/start` - Initialize the bot
+- `/help` - Show available commands
+- `/search` - Start a new search query
+- `/mysearches` - View and manage your searches
+- `/notifications` - View unread notifications
+- `/settings` - Manage your settings
+- `/test` - Test your searches (forces an immediate check)
+
+You can also paste product URLs directly to monitor specific items.
 
 ## Project Structure
 
 ```
-multiscraper/
-├── src/
-│   ├── domain/             # Domain models
-│   ├── infrastructure/     # Infrastructure configuration
-│   ├── core/               # Core functionality
-│   ├── application/        # Application services
-│   │   ├── scrapers/       # Retailer scrapers
-│   │   ├── notifications/  # Notification management
-│   │   └── telegram/       # Telegram bot interface
-│   └── utils/              # Utility functions
-├── tests/                  # Unit and integration tests
-└── docs/                   # Documentation
+src/
+├── domain/             # Domain models and interfaces
+├── infrastructure/     # Infrastructure configuration
+│   ├── config.ts      # Configuration management
+│   ├── database.ts    # Database setup and migrations
+│   └── logger.ts      # Logging configuration
+├── core/              # Core functionality
+├── application/       # Application services
+│   ├── scrapers/      # Retailer-specific scrapers
+│   ├── notifications/ # Notification management
+│   └── telegram/      # Telegram bot interface
+└── utils/            # Utility functions
 ```
 
 ## Adding a New Retailer
 
-1. Create a new file in `src/application/scrapers` that extends the `BaseScraper` class
+1. Create a new scraper class in `src/application/scrapers` that extends `BaseScraper`
 2. Implement the required methods:
-   - `search()` - to search for products
-   - `checkProduct()` - to check if product exists and get current price
-   - `formatProductUrl()` - to generate product URLs
-3. Update the scraper factory in `src/index.ts` to include your new scraper
+   - `search()` - Search for products
+   - `formatProductUrl()` - Generate product URLs
+3. Add the retailer to the database through migration
+4. Update the scraper factory in `src/index.ts`
 
 Example:
 ```typescript
 export class NewRetailerScraper extends BaseScraper {
   async search(query: SearchQuery): Promise<NewProduct[]> {
-    // Implementation
-  }
-
-  async checkProduct(product: Product): Promise<Product> {
     // Implementation
   }
 
