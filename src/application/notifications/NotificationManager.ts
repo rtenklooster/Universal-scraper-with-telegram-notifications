@@ -1,6 +1,6 @@
 import { Product } from '../../domain/Product';
 import { RetailerType } from '../../domain/Retailer';
-import db from '../../infrastructure/database';
+import db, { insertAndGetId } from '../../infrastructure/database';
 import logger from '../../infrastructure/logger';
 
 export enum NotificationType {
@@ -32,7 +32,7 @@ export class NotificationManager {
     type: NotificationType
   ): Promise<number> {
     try {
-      const [id] = await db('notifications').insert({
+      const id = await insertAndGetId('notifications', {
         userId,
         productId: product.id,
         searchQueryId,

@@ -1,5 +1,5 @@
 import * as schedule from 'node-schedule';
-import db from '../infrastructure/database';
+import db, { insertAndGetId } from '../infrastructure/database';
 import logger from '../infrastructure/logger';
 import { SearchQuery } from '../domain/SearchQuery';
 import { BaseScraper } from '../application/scrapers/BaseScraper';
@@ -320,13 +320,12 @@ export class Scheduler {
           } else {
             // It's a new product, insert it
             const now = new Date();
-            const [insertedId] = await db('products').insert({
+            productId = await insertAndGetId('products', {
               ...newProduct,
               discoveredAt: now,
               lastCheckedAt: now
             });
             
-            productId = insertedId;
             const product = { ...newProduct, id: productId } as Product;
             
             // Only notify on new products if that preference is enabled and it's not the first run
@@ -420,6 +419,28 @@ export class Scheduler {
       }
     } catch (error) {
       logger.error(`Error sending immediate notification: ${error}`);
+    }
+  }
+
+  // Force run all queries for a specific user
+  async forceRunAllQueries(userId: number): Promise<void> {
+    try {
+      // Get all active queries for the user
+      const queries = await db('search_queries')
+        .where({
+          userId: userId,
+          isActive: true
+        });
+
+      for (const query of queries) {
+        const scraper = this.scrapers.get(query.retailerId);
+        if (scraper) {
+          await this.executeSearch(query, scraper);
+        }
+      }
+    } catch (error) {
+      logger.error(`Error force running queries for user ${userId}: ${error}`);
+      throw error;
     }
   }
 }

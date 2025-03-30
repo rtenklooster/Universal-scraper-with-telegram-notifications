@@ -3,7 +3,7 @@ import { Update } from 'telegraf/typings/core/types/typegram';
 import { message } from 'telegraf/filters';
 import config from '../../infrastructure/config';
 import logger, { userLogger } from '../../infrastructure/logger';
-import db from '../../infrastructure/database';
+import db, { insertAndGetId } from '../../infrastructure/database';
 import { User, NewUser } from '../../domain/User';
 import { NewSearchQuery } from '../../domain/SearchQuery';
 import { NotificationManager, FormattedNotification } from '../notifications/NotificationManager';
@@ -85,6 +85,15 @@ export class TelegramBot {
         username: ctx.from.username || undefined
       });
       await this.handleSettings(ctx);
+    });
+    
+    // Test command
+    this.bot.command('test', async (ctx) => {
+      userLogger.info(`Command: /test`, {
+        userId: ctx.from.id,
+        username: ctx.from.username || undefined
+      });
+      await this.handleTest(ctx);
     });
   }
 
@@ -190,7 +199,7 @@ export class TelegramBot {
         isActive: true
       };
       
-      const [userId] = await db('users').insert(newUser);
+      const userId = await insertAndGetId('users', newUser);
       user = { ...newUser, id: userId, joinedAt: new Date() } as User;
       
       logger.info(`New user registered: ${user.firstName} (ID: ${userId})`);
@@ -433,7 +442,7 @@ export class TelegramBot {
       };
       
       // Insert the query and get its ID
-      const [queryId] = await db('search_queries').insert(newQuery);
+      const queryId = await insertAndGetId('search_queries', newQuery);
       
       // Schedule the query immediately if scheduler is available
       if (this.scheduler) {
@@ -799,6 +808,89 @@ export class TelegramBot {
       logger.info('Telegram bot stopped');
     } catch (error) {
       logger.error(`Error stopping Telegram bot: ${error}`);
+    }
+  }
+
+  private async handleTest(ctx: Context): Promise<void> {
+    try {
+      const user = await this.getOrCreateUser(ctx);
+      
+      const queries = await db('search_queries')
+        .where({
+          userId: user.id,
+          isActive: true
+        });
+      
+      if (queries.length === 0) {
+        await ctx.reply('Je hebt geen actieve zoekopdrachten om te testen.');
+        return;
+      }
+
+      await ctx.reply(`Start test voor ${queries.length} zoekopdrachten...`);
+
+      // Group queries by retailerId with proper type annotation
+      const retailerQueries: { [key: number]: Array<any> } = queries.reduce((acc: { [key: number]: Array<any> }, query) => {
+        if (!acc[query.retailerId]) {
+          acc[query.retailerId] = [];
+        }
+        acc[query.retailerId].push(query);
+        return acc;
+      }, {});
+
+      // Process each retailer
+      for (const [retailerId, queries] of Object.entries(retailerQueries)) {
+        const numericRetailerId = parseInt(retailerId);
+        logger.info(`Test: Processing ${queries.length} queries for retailer ${retailerId}`);
+        
+        // Get the two most recent products for this retailer
+        const products = await db('products')
+          .where('retailerId', '=', numericRetailerId)
+          .orderBy('id', 'desc')
+          .limit(2);
+
+        if (products.length >= 2) {
+          const latestProduct = products[0];
+          const secondLatestProduct = products[1];
+
+          logger.info(`Test: Deleting product ${latestProduct.id} (${latestProduct.title}) for retailer ${retailerId}`);
+          
+          // First delete any notifications for this product
+          await db('notifications')
+            .where({ productId: latestProduct.id })
+            .delete();
+
+          // Then delete the product
+          await db('products')
+            .where({ id: latestProduct.id })
+            .delete();
+
+          // Update the price of the second latest product (+10%)
+          const oldPrice = secondLatestProduct.price;
+          const newPrice = Math.round(oldPrice * 2 * 100) / 100;
+          
+          logger.info(`Test: Updating product ${secondLatestProduct.id} (${secondLatestProduct.title}) price from ${oldPrice} to ${newPrice}`);
+          
+          await db('products')
+            .where({ id: secondLatestProduct.id })
+            .update({ 
+              price: newPrice,
+              oldPrice: oldPrice
+            });
+        } else {
+          logger.info(`Test: Not enough products found for retailer ${retailerId}`);
+        }
+      }
+
+      // Force run all queries through scheduler
+      if (this.scheduler) {
+        await this.scheduler.forceRunAllQueries(user.id);
+        await ctx.reply('Test uitgevoerd! Je zou binnenkort meldingen moeten ontvangen voor prijswijzigingen en nieuwe producten.');
+      } else {
+        await ctx.reply('Fout: Scheduler niet beschikbaar');
+      }
+    } catch (error) {
+      logger.error(`Error in test handler: ${error}`);
+      await ctx.reply('Er is een fout opgetreden tijdens het testen.');
     }
   }
 }
