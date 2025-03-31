@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import config from './config';
 import logger from './logger';
+import { setTimeout } from 'timers/promises';
 
 // Ensure data directory exists for SQLite
 if (config.database.type === 'sqlite') {
@@ -89,137 +90,150 @@ async function migrateDatabase() {
 
 // Database initialization function
 export async function initializeDatabase() {
-  try {
-    const exists = await db.schema.hasTable('products');
-    
-    if (!exists) {
-      logger.info('Database initialisatie gestart...');
+  const maxRetries = 5; // Maximaal aantal pogingen
+  const retryDelay = 5000; // Wachttijd tussen pogingen in milliseconden
 
-      // Create users table
-      const hasUsersTable = await db.schema.hasTable('users');
-      if (!hasUsersTable) {
-        await db.schema.createTable('users', (table) => {
-          table.increments('id').primary();
-          table.integer('telegramId').notNullable().unique();
-          table.string('username', 255);
-          table.string('firstName', 255);
-          table.string('lastName', 255);
-          table.dateTime('joinedAt').defaultTo(db.fn.now());
-          table.boolean('isActive').defaultTo(true);
-        });
-        logger.info('Gebruikers tabel aangemaakt');
-      }
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const exists = await db.schema.hasTable('products');
 
-      // Create retailers table
-      const hasRetailersTable = await db.schema.hasTable('retailers');
-      if (!hasRetailersTable) {
-        await db.schema.createTable('retailers', (table) => {
-          table.increments('id').primary();
-          table.string('name', 255).notNullable();
-          table.string('baseUrl', 255).notNullable();
-          table.boolean('useRotatingProxy').defaultTo(false);
-          table.boolean('useRandomUserAgent').defaultTo(false);
-          table.boolean('isActive').defaultTo(true);
-        });
-        logger.info('Retailers tabel aangemaakt');
+      if (!exists) {
+        logger.info('Database initialisatie gestart...');
 
-        // Insert default retailers
-        const defaultRetailers = [
-          { name: 'Lidl', baseUrl: 'https://www.lidl.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
-          { name: 'Marktplaats', baseUrl: 'https://www.marktplaats.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
-          { name: 'Vinted', baseUrl: 'https://www.vinted.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
-        ];
-
-        // Insert retailers using insertAndGetId
-        for (const retailer of defaultRetailers) {
-          const id = await insertAndGetId('retailers', retailer);
-          logger.debug(`Retailer ${retailer.name} toegevoegd met ID ${id}`);
+        // Create users table
+        const hasUsersTable = await db.schema.hasTable('users');
+        if (!hasUsersTable) {
+          await db.schema.createTable('users', (table) => {
+            table.increments('id').primary();
+            table.integer('telegramId').notNullable().unique();
+            table.string('username', 255);
+            table.string('firstName', 255);
+            table.string('lastName', 255);
+            table.dateTime('joinedAt').defaultTo(db.fn.now());
+            table.boolean('isActive').defaultTo(true);
+          });
+          logger.info('Gebruikers tabel aangemaakt');
         }
-        logger.info('Standaard retailers toegevoegd');
+
+        // Create retailers table
+        const hasRetailersTable = await db.schema.hasTable('retailers');
+        if (!hasRetailersTable) {
+          await db.schema.createTable('retailers', (table) => {
+            table.increments('id').primary();
+            table.string('name', 255).notNullable();
+            table.string('baseUrl', 255).notNullable();
+            table.boolean('useRotatingProxy').defaultTo(false);
+            table.boolean('useRandomUserAgent').defaultTo(false);
+            table.boolean('isActive').defaultTo(true);
+          });
+          logger.info('Retailers tabel aangemaakt');
+
+          // Insert default retailers
+          const defaultRetailers = [
+            { name: 'Lidl', baseUrl: 'https://www.lidl.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
+            { name: 'Marktplaats', baseUrl: 'https://www.marktplaats.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
+            { name: 'Vinted', baseUrl: 'https://www.vinted.nl', useRotatingProxy: false, useRandomUserAgent: true, isActive: true },
+          ];
+
+          // Insert retailers using insertAndGetId
+          for (const retailer of defaultRetailers) {
+            const id = await insertAndGetId('retailers', retailer);
+            logger.debug(`Retailer ${retailer.name} toegevoegd met ID ${id}`);
+          }
+          logger.info('Standaard retailers toegevoegd');
+        }
+
+        // Create search queries table
+        const hasSearchQueriesTable = await db.schema.hasTable('search_queries');
+        if (!hasSearchQueriesTable) {
+          await db.schema.createTable('search_queries', (table) => {
+            table.increments('id').primary();
+            table.integer('userId').notNullable();
+            table.integer('retailerId').notNullable();
+            table.string('searchText', 500).notNullable();
+            table.string('apiUrl', 1000);
+            table.dateTime('createdAt').defaultTo(db.fn.now());
+            table.dateTime('lastScrapedAt');
+            table.boolean('isActive').defaultTo(true);
+            table.integer('intervalMinutes').defaultTo(config.scraping.defaultIntervalMinutes);
+            table.boolean('notifyOnNew').defaultTo(true);
+            table.boolean('notifyOnPriceDrops').defaultTo(true);
+            table.integer('priceDropThresholdPercent');
+            
+            // Add foreign key constraints
+            table.foreign('userId').references('id').inTable('users');
+            table.foreign('retailerId').references('id').inTable('retailers');
+          });
+          logger.info('Search queries tabel aangemaakt');
+        }
+
+        // Create products table
+        const hasProductsTable = await db.schema.hasTable('products');
+        if (!hasProductsTable) {
+          await db.schema.createTable('products', (table) => {
+            table.increments('id').primary();
+            table.integer('retailerId').notNullable();
+            table.string('externalId', 255).notNullable();
+            table.string('title', 500).notNullable();
+            table.text('description');
+            table.decimal('price', 10, 2).notNullable();
+            table.decimal('oldPrice', 10, 2);
+            table.string('currency', 3).notNullable().defaultTo('EUR');
+            table.string('imageUrl', 1000);
+            table.string('productUrl', 1000).notNullable();
+            table.string('location', 255);
+            table.integer('distanceMeters');
+            table.string('priceType', 50);
+            table.dateTime('discoveredAt').defaultTo(db.fn.now());
+            table.dateTime('lastCheckedAt').defaultTo(db.fn.now());
+            table.boolean('isAvailable').defaultTo(true);
+
+            // Add foreign key and unique constraint
+            table.foreign('retailerId').references('id').inTable('retailers');
+            table.unique(['retailerId', 'externalId']);
+          });
+          logger.info('Products tabel aangemaakt');
+        }
+
+        // Create notifications table
+        const hasNotificationsTable = await db.schema.hasTable('notifications');
+        if (!hasNotificationsTable) {
+          await db.schema.createTable('notifications', (table) => {
+            table.increments('id').primary();
+            table.integer('userId').notNullable();
+            table.integer('productId').notNullable();
+            table.integer('searchQueryId').notNullable();
+            table.string('notificationType', 20).notNullable().checkIn(['NEW_PRODUCT', 'PRICE_DROP']);
+            table.dateTime('createdAt').defaultTo(db.fn.now());
+            table.boolean('isRead').defaultTo(false);
+
+            // Add foreign key constraints
+            table.foreign('userId').references('id').inTable('users');
+            table.foreign('productId').references('id').inTable('products');
+            table.foreign('searchQueryId').references('id').inTable('search_queries');
+          });
+          logger.info('Notifications tabel aangemaakt');
+        }
+
+        logger.info('Database initialisatie voltooid');
       }
 
-      // Create search queries table
-      const hasSearchQueriesTable = await db.schema.hasTable('search_queries');
-      if (!hasSearchQueriesTable) {
-        await db.schema.createTable('search_queries', (table) => {
-          table.increments('id').primary();
-          table.integer('userId').notNullable();
-          table.integer('retailerId').notNullable();
-          table.string('searchText', 500).notNullable();
-          table.string('apiUrl', 1000);
-          table.dateTime('createdAt').defaultTo(db.fn.now());
-          table.dateTime('lastScrapedAt');
-          table.boolean('isActive').defaultTo(true);
-          table.integer('intervalMinutes').defaultTo(config.scraping.defaultIntervalMinutes);
-          table.boolean('notifyOnNew').defaultTo(true);
-          table.boolean('notifyOnPriceDrops').defaultTo(true);
-          table.integer('priceDropThresholdPercent');
-          
-          // Add foreign key constraints
-          table.foreign('userId').references('id').inTable('users');
-          table.foreign('retailerId').references('id').inTable('retailers');
-        });
-        logger.info('Search queries tabel aangemaakt');
-      }
-
-      // Create products table
-      const hasProductsTable = await db.schema.hasTable('products');
-      if (!hasProductsTable) {
-        await db.schema.createTable('products', (table) => {
-          table.increments('id').primary();
-          table.integer('retailerId').notNullable();
-          table.string('externalId', 255).notNullable();
-          table.string('title', 500).notNullable();
-          table.text('description');
-          table.decimal('price', 10, 2).notNullable();
-          table.decimal('oldPrice', 10, 2);
-          table.string('currency', 3).notNullable().defaultTo('EUR');
-          table.string('imageUrl', 1000);
-          table.string('productUrl', 1000).notNullable();
-          table.string('location', 255);
-          table.integer('distanceMeters');
-          table.string('priceType', 50);
-          table.dateTime('discoveredAt').defaultTo(db.fn.now());
-          table.dateTime('lastCheckedAt').defaultTo(db.fn.now());
-          table.boolean('isAvailable').defaultTo(true);
-
-          // Add foreign key and unique constraint
-          table.foreign('retailerId').references('id').inTable('retailers');
-          table.unique(['retailerId', 'externalId']);
-        });
-        logger.info('Products tabel aangemaakt');
-      }
-
-      // Create notifications table
-      const hasNotificationsTable = await db.schema.hasTable('notifications');
-      if (!hasNotificationsTable) {
-        await db.schema.createTable('notifications', (table) => {
-          table.increments('id').primary();
-          table.integer('userId').notNullable();
-          table.integer('productId').notNullable();
-          table.integer('searchQueryId').notNullable();
-          table.string('notificationType', 20).notNullable().checkIn(['NEW_PRODUCT', 'PRICE_DROP']);
-          table.dateTime('createdAt').defaultTo(db.fn.now());
-          table.boolean('isRead').defaultTo(false);
-
-          // Add foreign key constraints
-          table.foreign('userId').references('id').inTable('users');
-          table.foreign('productId').references('id').inTable('products');
-          table.foreign('searchQueryId').references('id').inTable('search_queries');
-        });
-        logger.info('Notifications tabel aangemaakt');
-      }
+      // Run migrations for existing databases
+      await migrateDatabase();
 
       logger.info('Database initialisatie voltooid');
-    }
+      return; // Stop als de initialisatie succesvol is
+    } catch (error) {
+      logger.error(`Fout bij initialiseren van database (poging ${attempt} van ${maxRetries}):`, error);
 
-    // Run migrations for existing databases
-    await migrateDatabase();
-    
-    logger.info('Database initialisatie voltooid');
-  } catch (error) {
-    logger.error('Fout bij initialiseren van database:', error);
-    throw error;
+      if (attempt < maxRetries) {
+        logger.info(`Wachten ${retryDelay / 1000} seconden voordat opnieuw geprobeerd wordt...`);
+        await setTimeout(retryDelay);
+      } else {
+        logger.error('Maximaal aantal pogingen bereikt. Kan geen verbinding maken met de database.');
+        throw error; // Gooi de fout opnieuw als alle pogingen mislukken
+      }
+    }
   }
 }
 
