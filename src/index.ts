@@ -7,6 +7,96 @@ import { MarktplaatsScraper } from './application/scrapers/MarktplaatsScraper';
 import { RetailerType } from './domain/Retailer';
 import logger from './infrastructure/logger';
 import db from './infrastructure/database';
+import express from 'express';
+import cors from 'cors';
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// API endpoints
+app.get('/api/queries', async (_req, res) => {
+  try {
+    const queries = await db('search_queries')
+      .select('search_queries.*', 'retailers.name as retailerName')
+      .join('retailers', 'search_queries.retailerId', 'retailers.id');
+    res.json(queries);
+  } catch (error) {
+    logger.error(`Error fetching queries: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/products', async (_req, res) => {
+  try {
+    const products = await db('products')
+      .select('products.*', 'retailers.name as retailerName')
+      .join('retailers', 'products.retailerId', 'retailers.id')
+      .orderBy('discoveredAt', 'desc')
+      .limit(100);
+    res.json(products);
+  } catch (error) {
+    logger.error(`Error fetching products: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/retailers', async (_req, res) => {
+  try {
+    const retailers = await db('retailers').select('*');
+    res.json(retailers);
+  } catch (error) {
+    logger.error(`Error fetching retailers: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// CRUD operations for queries
+app.post('/api/queries', async (req, res) => {
+  try {
+    const [id] = await db('search_queries').insert(req.body);
+    const query = await db('search_queries')
+      .select('search_queries.*', 'retailers.name as retailerName')
+      .join('retailers', 'search_queries.retailerId', 'retailers.id')
+      .where('search_queries.id', id)
+      .first();
+    res.status(201).json(query);
+  } catch (error) {
+    logger.error(`Error creating query: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/queries/:id', async (req, res) => {
+  try {
+    // Remove non-table fields from the request body
+    const { retailerName, ...updateData } = req.body;
+    
+    await db('search_queries')
+      .where('id', req.params.id)
+      .update(updateData);
+      
+    const query = await db('search_queries')
+      .select('search_queries.*', 'retailers.name as retailerName')
+      .join('retailers', 'search_queries.retailerId', 'retailers.id')
+      .where('search_queries.id', req.params.id)
+      .first();
+    res.json(query);
+  } catch (error) {
+    logger.error(`Error updating query: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/queries/:id', async (req, res) => {
+  try {
+    await db('search_queries').where('id', req.params.id).delete();
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error deleting query: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Create scraper factory function
 const createScraper = async (retailerId: number): Promise<BaseScraper | undefined> => {
@@ -46,6 +136,12 @@ async function bootstrap() {
     logger.info('Initializing database...');
     await initializeDatabase();
     logger.info('Database initialized successfully');
+
+    // Start Express server
+    const port = 3001;
+    app.listen(port, () => {
+      logger.info(`API server listening on port ${port}`);
+    });
 
     // Initialize Telegram bot
     logger.info('Initializing Telegram bot...');
