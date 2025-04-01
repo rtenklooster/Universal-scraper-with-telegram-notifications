@@ -161,7 +161,12 @@ const QueriesPage = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
+      <Dialog 
+        open={openDialog} 
+        onClose={() => setOpenDialog(false)}
+        maxWidth="lg"
+        fullWidth
+      >
         <DialogTitle>Edit Query</DialogTitle>
         <DialogContent>
           {editQuery && (

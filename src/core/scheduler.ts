@@ -255,6 +255,9 @@ export class Scheduler {
       // Process results
       if (newProducts.length > 0) {
         for (const newProduct of newProducts) {
+          // Add queryId to the product
+          newProduct.queryId = query.id;
+
           // Check if the product already exists
           const existingProduct = await db('products')
             .where({
@@ -275,7 +278,8 @@ export class Scheduler {
                 oldPrice: existingProduct.price !== newProduct.price ? existingProduct.price : existingProduct.oldPrice,
                 priceType: newProduct.priceType,
                 location: newProduct.location,
-                distanceMeters: newProduct.distanceMeters
+                distanceMeters: newProduct.distanceMeters,
+                queryId: query.id // Update queryId for existing products too
               });
             
             productId = existingProduct.id;
@@ -318,7 +322,7 @@ export class Scheduler {
               }
             }
           } else {
-            // It's a new product, insert it
+            // It's a new product, insert it with queryId
             const now = new Date();
             productId = await insertAndGetId('products', {
               ...newProduct,

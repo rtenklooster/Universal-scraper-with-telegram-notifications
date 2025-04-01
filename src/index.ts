@@ -51,6 +51,50 @@ app.get('/api/retailers', async (_req, res) => {
   }
 });
 
+// Users endpoints
+app.get('/api/users', async (_req, res) => {
+  try {
+    const users = await db('users')
+      .select('*')
+      .orderBy('joinedAt', 'desc');
+    res.json(users);
+  } catch (error) {
+    logger.error(`Error fetching users: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Notifications endpoints
+app.get('/api/notifications', async (_req, res) => {
+  try {
+    const notifications = await db('notifications')
+      .join('products', 'notifications.productId', '=', 'products.id')
+      .join('retailers', 'products.retailerId', '=', 'retailers.id')
+      .join('users', 'notifications.userId', '=', 'users.id')
+      .join('search_queries', 'notifications.searchQueryId', '=', 'search_queries.id')
+      .select(
+        'notifications.*',
+        'products.title as productTitle',
+        'products.price as productPrice',
+        'products.oldPrice as productOldPrice',
+        'products.currency as productCurrency',
+        'products.productUrl',
+        'products.imageUrl',
+        'products.location',
+        'products.distanceMeters',
+        'retailers.name as retailerName',
+        'users.username as userName',
+        'search_queries.searchText as queryText'
+      )
+      .orderBy('notifications.createdAt', 'desc')
+      .limit(100);
+    res.json(notifications);
+  } catch (error) {
+    logger.error(`Error fetching notifications: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // CRUD operations for queries
 app.post('/api/queries', async (req, res) => {
   try {
@@ -69,8 +113,8 @@ app.post('/api/queries', async (req, res) => {
 
 app.put('/api/queries/:id', async (req, res) => {
   try {
-    // Remove non-table fields from the request body
-    const { retailerName, ...updateData } = req.body;
+    // Remove non-table fields and id from the request body
+    const { retailerName, id, ...updateData } = req.body;
     
     await db('search_queries')
       .where('id', req.params.id)

@@ -11,6 +11,7 @@ export interface NewProduct {
   location?: string;
   distanceMeters?: number;
   retailerId: number;
+  queryId: number;
   isAvailable: boolean;
   discoveredAt: Date;
   lastCheckedAt: Date;

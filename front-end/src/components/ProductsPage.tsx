@@ -17,15 +17,15 @@ import {
   Slider,
   Paper,
   IconButton,
-  Badge,
   Tooltip,
   SelectChangeEvent,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   FilterList as FilterIcon,
   Sort as SortIcon,
   LocationOn as LocationIcon,
-  Euro as EuroIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -52,15 +52,18 @@ interface Retailer {
   name: string;
 }
 
+type TimeFilter = 'all' | '1h' | '6h' | '12h' | '24h';
+
 const ProductsPage = () => {
   const [products, setProducts] = React.useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = React.useState('');
-  const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('asc');
+  const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc');
   const [sortField, setSortField] = React.useState<'price' | 'discoveredAt' | 'discountPercentage' | 'discountAmount'>('discoveredAt');
   const [retailerFilter, setRetailerFilter] = React.useState<number | 'all'>('all');
   const [priceRange, setPriceRange] = React.useState<[number, number]>([0, 1000]);
   const [retailers, setRetailers] = React.useState<Retailer[]>([]);
   const [maxPrice, setMaxPrice] = React.useState(1000);
+  const [timeFilter, setTimeFilter] = React.useState<TimeFilter>('all');
 
   React.useEffect(() => {
     fetchProducts();
@@ -88,6 +91,24 @@ const ProductsPage = () => {
     }
   };
 
+  const isWithinTimeRange = (date: string, hours: number | null) => {
+    if (hours === null) return true;
+    const productDate = new Date(date);
+    const now = new Date();
+    const diffHours = (now.getTime() - productDate.getTime()) / (1000 * 60 * 60);
+    return diffHours <= hours;
+  };
+
+  const getTimeFilterHours = (filter: TimeFilter): number | null => {
+    switch (filter) {
+      case '1h': return 1;
+      case '6h': return 6;
+      case '12h': return 12;
+      case '24h': return 24;
+      default: return null;
+    }
+  };
+
   const filteredProducts = products
     .filter((product: Product) =>
       (searchTerm === '' ||
@@ -95,15 +116,9 @@ const ProductsPage = () => {
         product.description.toLowerCase().includes(searchTerm.toLowerCase())) &&
       (retailerFilter === 'all' || product.retailerId === retailerFilter) &&
       product.price >= priceRange[0] &&
-      product.price <= priceRange[1]
-    )
-    .sort((a: Product, b: Product) => {
-      const compareValue = sortOrder === 'asc' ? 1 : -1;
-      if (sortField === 'price') {
-        return (a.price - b.price) * compareValue;
-      }
-      return (new Date(a.discoveredAt).getTime() - new Date(b.discoveredAt).getTime()) * compareValue;
-    });
+      product.price <= priceRange[1] &&
+      isWithinTimeRange(product.discoveredAt, getTimeFilterHours(timeFilter))
+    );
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
@@ -121,9 +136,18 @@ const ProductsPage = () => {
     setPriceRange(newValue as [number, number]);
   };
 
+  const handleTimeFilterChange = (_event: React.SyntheticEvent, newValue: TimeFilter) => {
+    setTimeFilter(newValue);
+  };
+
   const calculateDiscountPercentage = (price: number, oldPrice?: number) => {
     if (!oldPrice || oldPrice <= price) return null;
     return Math.round(((oldPrice - price) / oldPrice) * 100);
+  };
+
+  const calculateDiscountAmount = (price: number, oldPrice?: number) => {
+    if (!oldPrice || oldPrice <= price) return null;
+    return oldPrice - price;
   };
 
   const formatDistance = (meters?: number) => {
@@ -131,11 +155,6 @@ const ProductsPage = () => {
     return meters >= 1000 
       ? `${(meters / 1000).toFixed(1)} km`
       : `${meters} m`;
-  };
-
-  const calculateDiscountAmount = (price: number, oldPrice?: number) => {
-    if (!oldPrice || oldPrice <= price) return null;
-    return oldPrice - price;
   };
 
   const enhancedFilteredProducts = filteredProducts.sort((a: Product, b: Product) => {
@@ -158,6 +177,21 @@ const ProductsPage = () => {
     <Box>
       <Paper sx={{ p: 2, mb: 2 }}>
         <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12}>
+            <Tabs
+              value={timeFilter}
+              onChange={handleTimeFilterChange}
+              indicatorColor="primary"
+              textColor="primary"
+              variant="fullWidth"
+            >
+              <Tab label="Alle producten" value="all" />
+              <Tab label="Laatste uur" value="1h" />
+              <Tab label="Laatste 6 uur" value="6h" />
+              <Tab label="Laatste 12 uur" value="12h" />
+              <Tab label="Laatste 24 uur" value="24h" />
+            </Tabs>
+          </Grid>
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth

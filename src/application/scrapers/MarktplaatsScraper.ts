@@ -101,6 +101,7 @@ export class MarktplaatsScraper extends BaseScraper {
       location: item.location?.cityName || 'Onbekend',
       distanceMeters: item.location?.distanceMeters,
       retailerId: this.retailer.id,
+      queryId: 0, // This will be set by the scheduler
       isAvailable: true,
       discoveredAt: now,
       lastCheckedAt: now

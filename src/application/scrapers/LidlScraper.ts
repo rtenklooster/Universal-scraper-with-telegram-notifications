@@ -421,7 +421,8 @@ export class LidlScraper extends BaseScraper {
       isAvailable,
       description: `Merk: ${brand}\n${item.availability?.availabilityNote || ''}`,
       discoveredAt: now,
-      lastCheckedAt: now
+      lastCheckedAt: now,
+      queryId: 0 // This will be set by the scheduler
     };
   }
 

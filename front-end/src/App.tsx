@@ -4,6 +4,8 @@ import { Box, Container, AppBar, Toolbar, Typography, Button } from '@mui/materi
 import { Link } from 'react-router-dom';
 import QueriesPage from './components/QueriesPage';
 import ProductsPage from './components/ProductsPage';
+import UsersPage from './components/UsersPage';
+import NotificationsPage from './components/NotificationsPage';
 
 function App() {
   return (
@@ -19,12 +21,20 @@ function App() {
           <Button color="inherit" component={Link} to="/products">
             Products
           </Button>
+          <Button color="inherit" component={Link} to="/notifications">
+            Notifications
+          </Button>
+          <Button color="inherit" component={Link} to="/users">
+            Users
+          </Button>
         </Toolbar>
       </AppBar>
       <Container sx={{ mt: 3 }}>
         <Routes>
           <Route path="/" element={<QueriesPage />} />
           <Route path="/products" element={<ProductsPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/users" element={<UsersPage />} />
         </Routes>
       </Container>
     </Box>

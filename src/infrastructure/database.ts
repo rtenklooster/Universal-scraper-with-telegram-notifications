@@ -47,11 +47,88 @@ const db = knex(dbConfig);
 // Database migration function
 async function migrateDatabase() {
   try {
-    // Ensure the products table exists first
-    const hasProductsTable = await db.schema.hasTable('products');
-    if (!hasProductsTable) {
-      logger.error('Products table does not exist, cannot run migrations');
-      return;
+    if (config.database.type === 'mssql') {
+      // Drop alle bestaande foreign key constraints in één keer
+      await db.raw(`
+        DECLARE @sql NVARCHAR(MAX) = N'';
+        
+        SELECT @sql += N'
+        ALTER TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(parent_object_id))
+        + '.' + QUOTENAME(OBJECT_NAME(parent_object_id)) 
+        + ' DROP CONSTRAINT ' + QUOTENAME(name) + ';'
+        FROM sys.foreign_keys
+        WHERE OBJECT_NAME(parent_object_id) IN ('notifications', 'products', 'search_queries');
+        
+        EXEC sp_executesql @sql;
+      `);
+
+      // Maak nieuwe constraints één voor één aan
+      const constraints = [
+        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_products 
+         FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_search_queries 
+         FOREIGN KEY (searchQueryId) REFERENCES search_queries(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_users 
+         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE products ADD CONSTRAINT FK_products_retailers 
+         FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE products ADD CONSTRAINT FK_products_search_queries 
+         FOREIGN KEY (queryId) REFERENCES search_queries(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_users 
+         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`,
+        
+        `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_retailers 
+         FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`
+      ];
+
+      // Voer elke constraint afzonderlijk uit
+      for (const constraint of constraints) {
+        try {
+          await db.raw(constraint);
+        } catch (error) {
+          logger.error(`Fout bij toevoegen constraint: ${error}`);
+          // Ga door met de volgende constraint zelfs als er één faalt
+        }
+      }
+    } else {
+      // SQLite specifieke code
+      await db.schema.table('notifications', table => {
+        table.dropForeign(['productId']);
+        table.dropForeign(['searchQueryId']);
+        table.dropForeign(['userId']);
+      });
+
+      await db.schema.table('products', table => {
+        table.dropForeign(['retailerId']);
+        table.dropForeign(['queryId']);
+      });
+
+      await db.schema.table('search_queries', table => {
+        table.dropForeign(['userId']);
+        table.dropForeign(['retailerId']);
+      });
+
+      // Recreate foreign keys with CASCADE delete
+      await db.schema.table('notifications', table => {
+        table.foreign('productId').references('id').inTable('products').onDelete('CASCADE');
+        table.foreign('searchQueryId').references('id').inTable('search_queries').onDelete('CASCADE');
+        table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
+      });
+
+      await db.schema.table('products', table => {
+        table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
+        table.foreign('queryId').references('id').inTable('search_queries').onDelete('CASCADE');
+      });
+
+      await db.schema.table('search_queries', table => {
+        table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
+        table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
+      });
     }
 
     // Check and add location column
@@ -67,23 +144,23 @@ async function migrateDatabase() {
     const hasDistanceMetersColumn = await db.schema.hasColumn('products', 'distanceMeters');
     if (!hasDistanceMetersColumn) {
       await db.schema.table('products', (table) => {
-        table.integer('distanceMeters');
+        table.float('distanceMeters').nullable();
       });
       logger.info('DistanceMeters kolom toegevoegd aan products tabel');
     }
 
-    // Check and add priceType column
-    const hasPriceTypeColumn = await db.schema.hasColumn('products', 'priceType');
-    if (!hasPriceTypeColumn) {
-      await db.schema.table('products', (table) => {
-        table.string('priceType', 50);
+    // Check and add apiUrl column
+    const hasApiUrlColumn = await db.schema.hasColumn('search_queries', 'apiUrl');
+    if (!hasApiUrlColumn) {
+      await db.schema.table('search_queries', (table) => {
+        table.string('apiUrl', 2000).nullable();
       });
-      logger.info('PriceType kolom toegevoegd aan products tabel');
+      logger.info('ApiUrl kolom toegevoegd aan search_queries tabel');
     }
 
-    logger.info('Database migratie succesvol afgerond');
+    logger.info('Database migratie succesvol uitgevoerd');
   } catch (error) {
-    logger.error('Fout bij migreren van database:', error);
+    logger.error(`Fout bij migreren van database: ${error}`);
     throw error;
   }
 }
