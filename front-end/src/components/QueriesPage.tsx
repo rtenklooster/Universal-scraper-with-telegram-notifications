@@ -18,7 +18,12 @@ import {
   Button,
   Typography,
   FormControlLabel,
-  Switch
+  Switch,
+  Stack,
+  useTheme,
+  useMediaQuery,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import axios from 'axios';
@@ -34,26 +39,40 @@ interface Query {
   notifyOnPriceDrops: boolean;
   priceDropThresholdPercent?: number;
   lastScrapedAt?: string;
+  userId: number;
+  username?: string; // Toegevoegd username veld
 }
 
-const QueriesPage = () => {
+interface QueriesPageProps {
+  selectedUserId: number | null;
+}
+
+const QueriesPage: React.FC<QueriesPageProps> = ({ selectedUserId }) => {
   const [queries, setQueries] = useState<Query[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editQuery, setEditQuery] = useState<Query | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
-
-  useEffect(() => {
-    fetchQueries();
-  }, []);
+  const [selectedRetailer, setSelectedRetailer] = useState<string>('all');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const fetchQueries = async () => {
     try {
-      const response = await axios.get('/api/queries');
+      let url = '/api/queries';
+      if (selectedUserId) {
+        url += `?userId=${selectedUserId}`;
+      }
+      const response = await axios.get(url);
       setQueries(response.data);
     } catch (error) {
       console.error('Error fetching queries:', error);
     }
   };
+
+  // Effect to refetch when selectedUserId changes
+  React.useEffect(() => {
+    fetchQueries();
+  }, [selectedUserId]);
 
   const handleEdit = (query: Query) => {
     setEditQuery(query);
@@ -82,64 +101,117 @@ const QueriesPage = () => {
     }
   };
 
+  const retailers = Array.from(new Set(queries.map(q => q.retailerName)));
+  
   const filteredQueries = queries.filter(query =>
-    query.searchText.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    query.retailerName.toLowerCase().includes(searchTerm.toLowerCase())
+    (selectedRetailer === 'all' || query.retailerName === selectedRetailer) &&
+    (query.searchText.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    query.retailerName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
     <Box>
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h4">Search Queries</Typography>
+      <Stack 
+        direction={isMobile ? 'column' : 'row'} 
+        spacing={2} 
+        sx={{ mb: 3, alignItems: isMobile ? 'stretch' : 'center' }}
+      >
+        <Typography variant="h4" sx={{ flexGrow: 1, mb: isMobile ? 1 : 0 }}>
+          Search Queries
+        </Typography>
         <TextField
           label="Search queries..."
           variant="outlined"
           size="small"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
+          sx={{ minWidth: isMobile ? '100%' : '200px' }}
         />
-      </Box>
+      </Stack>
 
-      <TableContainer component={Paper}>
-        <Table>
+      <Paper sx={{ mb: 2 }}>
+        <Tabs
+          value={selectedRetailer}
+          onChange={(_, value) => setSelectedRetailer(value)}
+          variant="scrollable"
+          scrollButtons="auto"
+        >
+          <Tab label="All Retailers" value="all" />
+          {retailers.map(retailer => (
+            <Tab key={retailer} label={retailer} value={retailer} />
+          ))}
+        </Tabs>
+      </Paper>
+
+      <TableContainer 
+        component={Paper} 
+        sx={{ 
+          overflowX: 'auto',
+          '& .MuiTableCell-root': {
+            whiteSpace: 'nowrap',
+            minWidth: isMobile ? '100px' : 'auto',
+          },
+          '& .MuiTableCell-sizeSmall': {
+            padding: 1,
+          }
+        }}
+      >
+        <Table size={isMobile ? "small" : "medium"}>
           <TableHead>
             <TableRow>
               <TableCell>Retailer</TableCell>
               <TableCell>Search Query</TableCell>
-              <TableCell>Interval (min)</TableCell>
-              <TableCell>Status</TableCell>
+              {!selectedUserId && <TableCell>User</TableCell>}
+              <TableCell align="center">Interval</TableCell>
+              <TableCell align="center">Status</TableCell>
               <TableCell>Notifications</TableCell>
               <TableCell>Last Checked</TableCell>
-              <TableCell>Actions</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredQueries.map((query) => (
               <TableRow key={query.id}>
                 <TableCell>{query.retailerName}</TableCell>
-                <TableCell>{query.searchText}</TableCell>
-                <TableCell>{query.intervalMinutes}</TableCell>
                 <TableCell>
+                  <Typography 
+                    sx={{ 
+                      maxWidth: isMobile ? '150px' : '300px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    {query.searchText}
+                  </Typography>
+                </TableCell>
+                {!selectedUserId && (
+                  <TableCell>
+                    {query.username || `User ${query.userId}`}
+                  </TableCell>
+                )}
+                <TableCell align="center">{query.intervalMinutes}m</TableCell>
+                <TableCell align="center">
                   <Chip 
                     label={query.isActive ? "Active" : "Inactive"}
                     color={query.isActive ? "success" : "default"}
+                    size="small"
                   />
                 </TableCell>
                 <TableCell>
-                  <Box>
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ gap: 0.5 }}>
                     {query.notifyOnNew && (
-                      <Chip label="New Items" size="small" sx={{ mr: 0.5 }} />
+                      <Chip label="New" size="small" />
                     )}
                     {query.notifyOnPriceDrops && (
                       <Chip 
                         label={query.priceDropThresholdPercent 
-                          ? `Price Drops (${query.priceDropThresholdPercent}%)` 
-                          : "Price Drops"
+                          ? `${query.priceDropThresholdPercent}%` 
+                          : "Drops"
                         }
                         size="small"
                       />
                     )}
-                  </Box>
+                  </Stack>
                 </TableCell>
                 <TableCell>
                   {query.lastScrapedAt 
@@ -147,12 +219,12 @@ const QueriesPage = () => {
                     : 'Never'
                   }
                 </TableCell>
-                <TableCell>
-                  <IconButton onClick={() => handleEdit(query)} size="small">
-                    <EditIcon />
+                <TableCell align="right" sx={{ minWidth: '80px' }}>
+                  <IconButton onClick={() => handleEdit(query)} size="small" sx={{ mr: 1 }}>
+                    <EditIcon fontSize="small" />
                   </IconButton>
                   <IconButton onClick={() => handleDelete(query.id)} size="small">
-                    <DeleteIcon />
+                    <DeleteIcon fontSize="small" />
                   </IconButton>
                 </TableCell>
               </TableRow>
@@ -164,7 +236,8 @@ const QueriesPage = () => {
       <Dialog 
         open={openDialog} 
         onClose={() => setOpenDialog(false)}
-        maxWidth="lg"
+        fullScreen={isMobile}
+        maxWidth="sm"
         fullWidth
       >
         <DialogTitle>Edit Query</DialogTitle>
@@ -176,6 +249,8 @@ const QueriesPage = () => {
                 fullWidth
                 value={editQuery.searchText}
                 onChange={(e) => setEditQuery({...editQuery, searchText: e.target.value})}
+                multiline
+                rows={2}
               />
               <TextField
                 label="Interval (minutes)"
@@ -226,7 +301,7 @@ const QueriesPage = () => {
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
           <Button onClick={handleSave} variant="contained">Save</Button>
         </DialogActions>

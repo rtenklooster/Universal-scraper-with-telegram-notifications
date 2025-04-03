@@ -33,22 +33,31 @@ interface Notification {
   queryText: string;
 }
 
-const NotificationsPage = () => {
+interface NotificationsPageProps {
+  selectedUserId: number | null;
+}
+
+const NotificationsPage: React.FC<NotificationsPageProps> = ({ selectedUserId }) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
-    fetchNotifications();
-  }, []);
-
   const fetchNotifications = async () => {
     try {
-      const response = await axios.get('/api/notifications');
+      let url = '/api/notifications';
+      if (selectedUserId) {
+        url += `?userId=${selectedUserId}`;
+      }
+      const response = await axios.get(url);
       setNotifications(response.data);
     } catch (error) {
       console.error('Error fetching notifications:', error);
     }
   };
+
+  // Effect to refetch when selectedUserId changes
+  React.useEffect(() => {
+    fetchNotifications();
+  }, [selectedUserId]);
 
   const calculatePriceDropPercentage = (oldPrice: number, newPrice: number): number => {
     if (oldPrice <= 0 || newPrice <= 0) return 0;

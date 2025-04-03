@@ -28,6 +28,10 @@ import {
   LocationOn as LocationIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { styled } from '@mui/material/styles';
+import Collapse from '@mui/material/Collapse';
+import { IconButtonProps } from '@mui/material/IconButton';
 
 interface Product {
   id: number;
@@ -54,7 +58,26 @@ interface Retailer {
 
 type TimeFilter = 'all' | '1h' | '6h' | '12h' | '24h';
 
-const ProductsPage = () => {
+interface ProductsPageProps {
+  selectedUserId: number | null;
+}
+
+interface ExpandMoreProps extends IconButtonProps {
+  expand: boolean;
+}
+
+const ExpandMore = styled((props: ExpandMoreProps) => {
+  const { expand, ...other } = props;
+  return <IconButton {...other} />;
+})(({ theme, expand }) => ({
+  transform: !expand ? 'rotate(0deg)' : 'rotate(180deg)',
+  marginLeft: 'auto',
+  transition: theme.transitions.create('transform', {
+    duration: theme.transitions.duration.shortest,
+  }),
+}));
+
+const ProductsPage: React.FC<ProductsPageProps> = ({ selectedUserId }) => {
   const [products, setProducts] = React.useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc');
@@ -63,7 +86,15 @@ const ProductsPage = () => {
   const [priceRange, setPriceRange] = React.useState<[number, number]>([0, 1000]);
   const [retailers, setRetailers] = React.useState<Retailer[]>([]);
   const [maxPrice, setMaxPrice] = React.useState(1000);
-  const [timeFilter, setTimeFilter] = React.useState<TimeFilter>('all');
+  const [timeFilter, setTimeFilter] = React.useState<TimeFilter>('1h');
+  const [expandedCards, setExpandedCards] = React.useState<{[key: number]: boolean}>({});
+
+  const handleExpandClick = (productId: number) => {
+    setExpandedCards(prev => ({
+      ...prev,
+      [productId]: !prev[productId]
+    }));
+  };
 
   React.useEffect(() => {
     fetchProducts();
@@ -72,7 +103,11 @@ const ProductsPage = () => {
 
   const fetchProducts = async () => {
     try {
-      const response = await axios.get('/api/products');
+      let url = '/api/products';
+      if (selectedUserId) {
+        url += `?userId=${selectedUserId}`;
+      }
+      const response = await axios.get(url);
       setProducts(response.data);
       const maxProductPrice = Math.max(...response.data.map((p: Product) => p.price));
       setMaxPrice(maxProductPrice);
@@ -266,57 +301,114 @@ const ProductsPage = () => {
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',
-                width: '100%',
               }}
             >
-              {product.oldPrice && product.oldPrice > product.price && (
-                <Chip
-                  label={`-${calculateDiscountPercentage(product.price, product.oldPrice)}%`}
-                  color="error"
-                  sx={{
-                    position: 'absolute',
-                    top: 10,
-                    right: 10,
-                    zIndex: 1,
-                  }}
-                />
-              )}
-              <CardMedia
-                component="img"
-                height="200"
-                image={product.imageUrl || 'placeholder.png'}
-                alt={product.title}
-                sx={{ objectFit: 'contain', p: 1 }}
-              />
-              <CardContent sx={{ flexGrow: 1 }}>
+              <Box sx={{ p: 2 }}>
                 <Typography
                   variant="h6"
                   component="a"
                   href={product.productUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  noWrap
-                  sx={{ textDecoration: 'none', color: 'inherit', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}
+                  sx={{
+                    textDecoration: 'none',
+                    color: 'inherit',
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: 2,
+                    overflow: 'hidden',
+                    minHeight: '3.6em'
+                  }}
                 >
                   {product.title}
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mt: 1, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}
-                >
-                  {product.description}
-                </Typography>
-                {product.location && (
-                  <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                    <Tooltip title={formatDistance(product.distanceMeters) || ''}>
-                      <Chip size="small" icon={<LocationIcon />} label={product.location} />
-                    </Tooltip>
-                  </Stack>
+              </Box>
+
+              <Box sx={{ position: 'relative' }}>
+                {product.oldPrice && product.oldPrice > product.price && (
+                  <Chip
+                    label={`-${calculateDiscountPercentage(product.price, product.oldPrice)}%`}
+                    color="error"
+                    sx={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      zIndex: 1,
+                    }}
+                  />
                 )}
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {new Date(product.discoveredAt).toLocaleString()}
-                </Typography>
+                <CardMedia
+                  component="img"
+                  height="200"
+                  image={product.imageUrl || 'placeholder.png'}
+                  alt={product.title}
+                  sx={{ objectFit: 'contain', p: 1 }}
+                />
+              </Box>
+
+              <CardContent sx={{ flexGrow: 1, pt: 1 }}>
+                <Stack spacing={1}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Box>
+                      {product.oldPrice && product.oldPrice > product.price && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ textDecoration: 'line-through' }}
+                        >
+                          {product.oldPrice} {product.currency}
+                        </Typography>
+                      )}
+                      <Typography variant="h6" color="primary">
+                        {product.price} {product.currency}
+                      </Typography>
+                    </Box>
+                    {product.location && (
+                      <Tooltip title={formatDistance(product.distanceMeters) || ''}>
+                        <Chip size="small" icon={<LocationIcon />} label={product.location} />
+                      </Tooltip>
+                    )}
+                  </Stack>
+
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {new Date(product.discoveredAt).toLocaleString()}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {product.retailerName}
+                    </Typography>
+                  </Box>
+
+                  {product.description && (
+                    <>
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
+                          display: '-webkit-box',
+                          WebkitBoxOrient: 'vertical',
+                          WebkitLineClamp: 2,
+                          overflow: 'hidden',
+                          visibility: expandedCards[product.id] ? 'hidden' : 'visible',
+                          height: expandedCards[product.id] ? 0 : 'auto',
+                        }}
+                      >
+                        {product.description}
+                      </Typography>
+                      <ExpandMore
+                        expand={expandedCards[product.id] || false}
+                        onClick={() => handleExpandClick(product.id)}
+                        aria-expanded={expandedCards[product.id] || false}
+                        aria-label="show more"
+                      >
+                        <ExpandMoreIcon />
+                      </ExpandMore>
+                      <Collapse in={expandedCards[product.id]} timeout="auto" unmountOnExit>
+                        <Typography paragraph>{product.description}</Typography>
+                      </Collapse>
+                    </>
+                  )}
+                </Stack>
               </CardContent>
             </Card>
           </Grid>

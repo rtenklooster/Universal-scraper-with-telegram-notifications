@@ -3,7 +3,7 @@ import { Update } from 'telegraf/typings/core/types/typegram';
 import { message } from 'telegraf/filters';
 import config from '../../infrastructure/config';
 import logger, { userLogger } from '../../infrastructure/logger';
-import db, { insertAndGetId } from '../../infrastructure/database';
+import db, { insertAndGetId, createUserToken } from '../../infrastructure/database';
 import { User, NewUser } from '../../domain/User';
 import { NewSearchQuery } from '../../domain/SearchQuery';
 import { NotificationManager, FormattedNotification } from '../notifications/NotificationManager';
@@ -94,6 +94,63 @@ export class TelegramBot {
         username: ctx.from.username || undefined
       });
       await this.handleTest(ctx);
+    });
+
+    // Web access command
+    this.bot.command('web', async (ctx) => {
+      try {
+        const user = await this.getOrCreateUser(ctx);
+        const token = await createUserToken(user.id, config.web.tokenExpiryHours);
+        const webUrl = `${config.web.url}/${token}`;
+
+        await ctx.reply(
+          `🌐 Je kunt de web interface hier bekijken:\n[Open web interface](${webUrl})\n\n` +
+          `Deze link is ${config.web.tokenExpiryHours} uur geldig.`,
+          { parse_mode: 'Markdown' }
+        );
+
+        userLogger.info('Web access token generated', {
+          userId: user.id,
+          username: user.username
+        });
+      } catch (error) {
+        logger.error(`Error generating web access: ${error}`);
+        await ctx.reply('Er is een fout opgetreden bij het genereren van de web toegang.');
+      }
+    });
+
+    // Admin web access command
+    this.bot.command('adminweb', async (ctx) => {
+      try {
+        const user = await this.getOrCreateUser(ctx);
+        
+        // Check if user is admin
+        const dbUser = await db('users')
+          .where('id', user.id)
+          .first();
+
+        if (!dbUser?.isAdmin) {
+          await ctx.reply('Je hebt geen toegang tot de admin interface.');
+          return;
+        }
+
+        const token = await createUserToken(user.id, config.web.tokenExpiryHours);
+        const webUrl = `${config.web.url}/admin/${token}`;
+
+        await ctx.reply(
+          `👑 Je kunt de admin interface hier bekijken:\n[Open admin interface](${webUrl})\n\n` +
+          `Deze link is ${config.web.tokenExpiryHours} uur geldig.`,
+          { parse_mode: 'Markdown' }
+        );
+
+        userLogger.info('Admin web access token generated', {
+          userId: user.id,
+          username: user.username
+        });
+      } catch (error) {
+        logger.error(`Error generating admin web access: ${error}`);
+        await ctx.reply('Er is een fout opgetreden bij het genereren van de admin web toegang.');
+      }
     });
   }
 

@@ -4,7 +4,7 @@ import path from 'path';
 // Laad .env bestand
 dotenv.config();
 
-export const config = {
+const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
   },
@@ -31,7 +31,12 @@ export const config = {
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info',
-  }
+  },
+  web: {
+    url: process.env.WEB_URL || 'http://localhost:3000',
+    tokenExpiryHours: parseInt(process.env.WEB_TOKEN_EXPIRY_HOURS || '24', 10),
+    adminToken: process.env.ADMIN_TOKEN
+  },
 };
 
 export default config;

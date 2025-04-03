@@ -1,9 +1,12 @@
 import knex from 'knex';
+import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import config from './config';
 import logger from './logger';
-import { setTimeout } from 'timers/promises';
+import { promisify } from 'util';
+
+const sleep = promisify(setTimeout);
 
 // Ensure data directory exists for SQLite
 if (config.database.type === 'sqlite') {
@@ -48,51 +51,62 @@ const db = knex(dbConfig);
 async function migrateDatabase() {
   try {
     if (config.database.type === 'mssql') {
-      // Drop alle bestaande foreign key constraints in één keer
-      await db.raw(`
-        DECLARE @sql NVARCHAR(MAX) = N'';
-        
-        SELECT @sql += N'
-        ALTER TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(parent_object_id))
-        + '.' + QUOTENAME(OBJECT_NAME(parent_object_id)) 
-        + ' DROP CONSTRAINT ' + QUOTENAME(name) + ';'
+      // Check of de constraints al bestaan voordat we ze proberen aan te maken
+      const existingConstraints = await db.raw(`
+        SELECT name 
         FROM sys.foreign_keys
         WHERE OBJECT_NAME(parent_object_id) IN ('notifications', 'products', 'search_queries');
-        
-        EXEC sp_executesql @sql;
       `);
 
-      // Maak nieuwe constraints één voor één aan
+      const constraintNames = new Set(existingConstraints.map((row: any) => row.name));
+
       const constraints = [
-        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_products 
-         FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_search_queries 
-         FOREIGN KEY (searchQueryId) REFERENCES search_queries(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_users 
-         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE products ADD CONSTRAINT FK_products_retailers 
-         FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE products ADD CONSTRAINT FK_products_search_queries 
-         FOREIGN KEY (queryId) REFERENCES search_queries(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_users 
-         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`,
-        
-        `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_retailers 
-         FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`
+        {
+          name: 'FK_notifications_products',
+          sql: `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_products 
+               FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_notifications_search_queries',
+          sql: `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_search_queries 
+               FOREIGN KEY (searchQueryId) REFERENCES search_queries(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_notifications_users',
+          sql: `ALTER TABLE notifications ADD CONSTRAINT FK_notifications_users 
+               FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_products_retailers',
+          sql: `ALTER TABLE products ADD CONSTRAINT FK_products_retailers 
+               FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_products_search_queries',
+          sql: `ALTER TABLE products ADD CONSTRAINT FK_products_search_queries 
+               FOREIGN KEY (queryId) REFERENCES search_queries(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_search_queries_users',
+          sql: `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_users 
+               FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE`
+        },
+        {
+          name: 'FK_search_queries_retailers',
+          sql: `ALTER TABLE search_queries ADD CONSTRAINT FK_search_queries_retailers 
+               FOREIGN KEY (retailerId) REFERENCES retailers(id) ON DELETE CASCADE`
+        }
       ];
 
-      // Voer elke constraint afzonderlijk uit
+      // Voeg alleen constraints toe die nog niet bestaan
       for (const constraint of constraints) {
-        try {
-          await db.raw(constraint);
-        } catch (error) {
-          logger.error(`Fout bij toevoegen constraint: ${error}`);
-          // Ga door met de volgende constraint zelfs als er één faalt
+        if (!constraintNames.has(constraint.name)) {
+          try {
+            await db.raw(constraint.sql);
+            logger.info(`Foreign key constraint ${constraint.name} toegevoegd`);
+          } catch (error) {
+            logger.error(`Fout bij toevoegen constraint ${constraint.name}: ${error}`);
+          }
         }
       }
     } else {
@@ -156,6 +170,28 @@ async function migrateDatabase() {
         table.string('apiUrl', 2000).nullable();
       });
       logger.info('ApiUrl kolom toegevoegd aan search_queries tabel');
+    }
+
+    // Add admin flag to users table if it doesn't exist
+    const hasAdminColumn = await db.schema.hasColumn('users', 'isAdmin');
+    if (!hasAdminColumn) {
+      await db.schema.table('users', (table) => {
+        table.boolean('isAdmin').defaultTo(false);
+      });
+      logger.info('Admin flag added to users table');
+    }
+
+    // Create user_tokens table if it doesn't exist
+    const hasTokensTable = await db.schema.hasTable('user_tokens');
+    if (!hasTokensTable) {
+      await db.schema.createTable('user_tokens', (table) => {
+        table.string('token', 64).primary();
+        table.integer('userId').notNullable();
+        table.timestamp('createdAt').defaultTo(db.fn.now());
+        table.timestamp('expiresAt').notNullable();
+        table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
+      });
+      logger.info('User tokens table created');
     }
 
     logger.info('Database migratie succesvol uitgevoerd');
@@ -305,7 +341,7 @@ export async function initializeDatabase() {
 
       if (attempt < maxRetries) {
         logger.info(`Wachten ${retryDelay / 1000} seconden voordat opnieuw geprobeerd wordt...`);
-        await setTimeout(retryDelay);
+        await sleep(retryDelay);
       } else {
         logger.error('Maximaal aantal pogingen bereikt. Kan geen verbinding maken met de database.');
         throw error; // Gooi de fout opnieuw als alle pogingen mislukken
@@ -352,6 +388,39 @@ export async function getLastInsertedId(tableName: string, transaction?: any): P
     logger.error(`Error getting last inserted ID for table ${tableName}: ${error}`);
     throw error;
   }
+}
+
+export async function createUserToken(userId: number, expiresInHours: number = 24): Promise<string> {
+  const token = uuidv4();
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + expiresInHours);
+
+  await db('user_tokens').insert({
+    token,
+    userId,
+    expiresAt
+  });
+
+  return token;
+}
+
+export async function validateUserToken(token: string): Promise<number | null> {
+  const result = await db('user_tokens')
+    .where('token', token)
+    .where('expiresAt', '>', db.fn.now())
+    .first();
+
+  if (!result) {
+    return null;
+  }
+
+  return result.userId;
+}
+
+export async function cleanupExpiredTokens(): Promise<void> {
+  await db('user_tokens')
+    .where('expiresAt', '<=', db.fn.now())
+    .delete();
 }
 
 export default db;
