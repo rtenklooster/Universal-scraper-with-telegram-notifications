@@ -110,39 +110,67 @@ async function migrateDatabase() {
         }
       }
     } else {
-      // SQLite specifieke code
-      await db.schema.table('notifications', table => {
-        table.dropForeign(['productId']);
-        table.dropForeign(['searchQueryId']);
-        table.dropForeign(['userId']);
-      });
+      // SQLite specifieke code - gebruik try/catch voor bestaande constraints
+      try {
+        await db.schema.table('notifications', table => {
+          table.dropForeign(['productId']);
+          table.dropForeign(['searchQueryId']);
+          table.dropForeign(['userId']);
+        });
+      } catch (error) {
+        logger.debug('Sommige foreign keys bestonden al niet in notifications tabel');
+      }
 
-      await db.schema.table('products', table => {
-        table.dropForeign(['retailerId']);
-        table.dropForeign(['queryId']);
-      });
+      try {
+        await db.schema.table('products', table => {
+          table.dropForeign(['retailerId']);
+          table.dropForeign(['queryId']);
+        });
+      } catch (error) {
+        logger.debug('Sommige foreign keys bestonden al niet in products tabel');
+      }
 
-      await db.schema.table('search_queries', table => {
-        table.dropForeign(['userId']);
-        table.dropForeign(['retailerId']);
-      });
+      try {
+        await db.schema.table('search_queries', table => {
+          table.dropForeign(['userId']);
+          table.dropForeign(['retailerId']);
+        });
+      } catch (error) {
+        logger.debug('Sommige foreign keys bestonden al niet in search_queries tabel');
+      }
 
-      // Recreate foreign keys with CASCADE delete
-      await db.schema.table('notifications', table => {
-        table.foreign('productId').references('id').inTable('products').onDelete('CASCADE');
-        table.foreign('searchQueryId').references('id').inTable('search_queries').onDelete('CASCADE');
-        table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
-      });
+      // Recreate foreign keys with CASCADE delete - alleen als kolommen bestaan
+      const hasProductIdColumn = await db.schema.hasColumn('notifications', 'productId');
+      const hasSearchQueryIdColumn = await db.schema.hasColumn('notifications', 'searchQueryId');
+      const hasNotificationUserIdColumn = await db.schema.hasColumn('notifications', 'userId');
+      
+      if (hasProductIdColumn && hasSearchQueryIdColumn && hasNotificationUserIdColumn) {
+        await db.schema.table('notifications', table => {
+          table.foreign('productId').references('id').inTable('products').onDelete('CASCADE');
+          table.foreign('searchQueryId').references('id').inTable('search_queries').onDelete('CASCADE');
+          table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
+        });
+      }
 
-      await db.schema.table('products', table => {
-        table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
-        table.foreign('queryId').references('id').inTable('search_queries').onDelete('CASCADE');
-      });
+      const hasRetailerIdColumn = await db.schema.hasColumn('products', 'retailerId');
+      const hasQueryIdColumnInProducts = await db.schema.hasColumn('products', 'queryId');
+      
+      if (hasRetailerIdColumn && hasQueryIdColumnInProducts) {
+        await db.schema.table('products', table => {
+          table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
+          table.foreign('queryId').references('id').inTable('search_queries').onDelete('CASCADE');
+        });
+      }
 
-      await db.schema.table('search_queries', table => {
-        table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
-        table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
-      });
+      const hasUserIdColumn = await db.schema.hasColumn('search_queries', 'userId');
+      const hasRetailerIdColumnInQueries = await db.schema.hasColumn('search_queries', 'retailerId');
+      
+      if (hasUserIdColumn && hasRetailerIdColumnInQueries) {
+        await db.schema.table('search_queries', table => {
+          table.foreign('userId').references('id').inTable('users').onDelete('CASCADE');
+          table.foreign('retailerId').references('id').inTable('retailers').onDelete('CASCADE');
+        });
+      }
     }
 
     // Check and add location column
@@ -170,6 +198,22 @@ async function migrateDatabase() {
         table.string('apiUrl', 2000).nullable();
       });
       logger.info('ApiUrl kolom toegevoegd aan search_queries tabel');
+    }
+
+    // Check and add queryId column to products table
+    const hasQueryIdColumn = await db.schema.hasColumn('products', 'queryId');
+    if (!hasQueryIdColumn) {
+      await db.schema.table('products', (table) => {
+        table.integer('queryId').nullable();
+      });
+      logger.info('QueryId kolom toegevoegd aan products tabel');
+      
+      // Add foreign key constraint for queryId
+      if (config.database.type === 'sqlite') {
+        await db.schema.table('products', table => {
+          table.foreign('queryId').references('id').inTable('search_queries').onDelete('CASCADE');
+        });
+      }
     }
 
     // Add admin flag to users table if it doesn't exist
@@ -286,6 +330,7 @@ export async function initializeDatabase() {
           await db.schema.createTable('products', (table) => {
             table.increments('id').primary();
             table.integer('retailerId').notNullable();
+            table.integer('queryId').notNullable();
             table.string('externalId', 255).notNullable();
             table.string('title', 500).notNullable();
             table.text('description');
@@ -303,6 +348,7 @@ export async function initializeDatabase() {
 
             // Add foreign key and unique constraint
             table.foreign('retailerId').references('id').inTable('retailers');
+            table.foreign('queryId').references('id').inTable('search_queries');
             table.unique(['retailerId', 'externalId']);
           });
           logger.info('Products tabel aangemaakt');
