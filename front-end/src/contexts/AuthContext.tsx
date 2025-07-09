@@ -20,7 +20,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 // API basis URL configuratie
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://10.0.1.181:3001';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
